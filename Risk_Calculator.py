@@ -78,14 +78,10 @@ def analyze_risk(ui_inputs=None):
         prob = model.predict_proba(input_df)[0][1]
         results.append(prob)
 
-    # Sort hourly risks descending to find daily "Critical Gauntlets"
     sorted_risks = sorted(results, reverse=True)
     top_3_gauntlets = sorted_risks[:3]
 
-    # Metric 1: Realistic Daily Risk (Compounding only across top 3 high-risk windows)
     realistic_daily_risk = 1.0 - np.prod([(1.0 - p) for p in top_3_gauntlets])
-
-    # Metric 2: Long-Term Goal Tracker (Compounding across all 24 hours)
     long_term_compounded_risk = 1.0 - np.prod([(1.0 - p) for p in results])
 
     peak_risk = max(results)
@@ -106,39 +102,36 @@ def analyze_risk(ui_inputs=None):
     print("=" * 68)
 
     # ==========================================================
-    # 3. LIVE UPCOMING HOUR & CONTEXT OVERRIDES
+    # 3. LIVE UPCOMING HOUR & CONTEXT OVERRIDES (TIMEZONE AWARE)
     # ==========================================================
-    current_h = pd.Timestamp.now().hour
+    try:
+        current_h = pd.Timestamp.now(tz='America/New_York').hour
+    except Exception:
+        current_h = pd.Timestamp.now().hour
+
     live_data = base_data.copy()
     if 'Hour' in live_data: live_data['Hour'] = float(current_h)
 
-    # PATH A: WEB UI MODE (Automated execution from Streamlit app toggles)
+    # PATH A: WEB UI MODE
     if ui_inputs is not None:
-        print(f"\n--- LIVE HOURLY RISK FORECAST ({current_h:02d}:00) ---")
+        print(f"\n--- LIVE HOURLY RISK FORECAST ({current_h:02d}:00 EST) ---")
         print("Applying Command Center UI Overrides:")
 
-        # Map UI toggles directly onto model feature names dynamically
         active_triggers = []
         for feat in expected_features:
             feat_lower = feat.lower()
-
-            # Map isolation
             if 'alone' in feat_lower and ui_inputs.get('alone'):
                 live_data[feat] = 1.0
                 active_triggers.append(feat)
-            # Map location
             elif ('bed' in feat_lower or 'room' in feat_lower) and ui_inputs.get('location') == 'Bedroom':
                 live_data[feat] = 1.0
                 active_triggers.append(feat)
-            # Map stress
             elif 'stress' in feat_lower and ui_inputs.get('stress', 0) >= 6:
                 live_data[feat] = 1.0
                 active_triggers.append(f"{feat} (Level {ui_inputs.get('stress')})")
-            # Map urge
             elif 'urge' in feat_lower and ui_inputs.get('urge', 0) >= 5:
                 live_data[feat] = float(ui_inputs.get('urge', 1))
                 active_triggers.append(f"{feat} (Level {ui_inputs.get('urge')})")
-            # Map active searching
             elif ('search' in feat_lower or 'freak' in feat_lower or 'trigger' in feat_lower) and ui_inputs.get(
                     'searching'):
                 live_data[feat] = 1.0
@@ -157,7 +150,6 @@ def analyze_risk(ui_inputs=None):
         print(f"[>>>] LIVE PROBABILITY FOR {current_h:02d}:00 : {live_prob:.1%}")
         print("-" * 68)
 
-        # Tactical circuit breakers based on score
         if live_prob > 0.70 or ui_inputs.get('searching'):
             print("⚠️ ACTION REQUIRED: IMMEDIATE CIRCUIT BREAKER.")
             print("1. Terminate current digital session immediately.")
@@ -171,9 +163,10 @@ def analyze_risk(ui_inputs=None):
         print("=" * 68)
         return
 
-    # PATH B: TERMINAL INTERACTIVE MODE (Fallback when run in terminal)
+    # PATH B: TERMINAL INTERACTIVE MODE
     try:
-        choice = input("\nCalculate high-precision risk for the upcoming hour? (y/n): ").strip().lower()
+        choice = input(
+            f"\nCalculate high-precision risk for upcoming hour ({current_h:02d}:00)? (y/n): ").strip().lower()
         if choice == 'y':
             print(f"\nRefining conditions for {current_h:02d}:00...")
             for ctx in ['Stressed', 'In bed', 'Alone/ bedroom', 'Bored', 'Tired']:
@@ -185,7 +178,6 @@ def analyze_risk(ui_inputs=None):
             live_prob = model.predict_proba(live_df)[0][1]
             print(f"\n[>>>] LIVE PROBABILITY FOR {current_h:02d}:00 : {live_prob:.1%}")
 
-        # Granular Hypothetical Mode
         choice_hypo = input("\nRun a granular hypothetical stress test? (y/n): ").strip().lower()
         if choice_hypo == 'y':
             print("\n--- GRANULAR HYPOTHETICAL MODE ---")
@@ -204,7 +196,6 @@ def analyze_risk(ui_inputs=None):
         print("\n[i] Execution terminated.")
 
 
-# Aliases to ensure compatibility with any Streamlit button call
 calculate_risk = analyze_risk
 main = analyze_risk
 
