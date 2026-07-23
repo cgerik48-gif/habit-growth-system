@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from data_sync import sync_data
+from Data_Sync import sync_data
 from Predictive_Engine import build_predictive_engine
 from Risk_Calculator import analyze_risk
 
