@@ -2,7 +2,6 @@
 # SENSITIVE CREDS & CONFIGS (CRITICAL)
 # ==========================================
 credentials.json
-config.json
 .env
 
 # ==========================================

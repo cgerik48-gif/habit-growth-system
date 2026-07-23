@@ -2,7 +2,6 @@
     "SHEET_ID": "1_GUT5shwTuS6PadFPG0g4JVNnnZkjY89Ah8KYcocYws",
     "TARGETS": {
         "Daily Health": "daily_health.csv",
-        "Emergency Log": "emergency_log.csv",
-        "Training and Nutrition": "training_nutrition.csv"
+        "Emergency Log": "emergency_log.csv"
     }
 }
