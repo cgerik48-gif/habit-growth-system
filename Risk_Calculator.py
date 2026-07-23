@@ -5,8 +5,8 @@ import numpy as np
 import joblib
 
 
-def analyze_risk():
-    # Anchor working directory for PyCharm execution
+def analyze_risk(ui_inputs=None):
+    # Anchor working directory for execution reliability
     try:
         script_dir = os.path.dirname(os.path.abspath(__file__))
         os.chdir(script_dir)
@@ -18,6 +18,11 @@ def analyze_risk():
         return
 
     model = joblib.load('relapse_predictor.pkl')
+
+    if not os.path.exists('emergency_log.csv'):
+        print("[ERROR] emergency_log.csv not found. Run Data Sync first.")
+        return
+
     emergency = pd.read_csv('emergency_log.csv')
     emergency.columns = emergency.columns.str.strip()
 
@@ -42,8 +47,8 @@ def analyze_risk():
     # 1. RECONSTRUCT ACTUAL STATEFUL MEMORY
     # ==========================================================
     time_indexed = emergency.set_index('Timestamp')
-    drain_7d = time_indexed['Effort_Required'].rolling('7D').sum().iloc[-1]
-    momentum_7d = time_indexed['Relapse_Status'].rolling('7D').sum().iloc[-1]
+    drain_7d = time_indexed['Effort_Required'].rolling('7D').sum().iloc[-1] if not time_indexed.empty else 0.0
+    momentum_7d = time_indexed['Relapse_Status'].rolling('7D').sum().iloc[-1] if not time_indexed.empty else 0.0
 
     # Calculate true active resistance streak
     current_streak = 0
@@ -56,8 +61,8 @@ def analyze_risk():
     base_data = {feat: 0.0 for feat in expected_features}
 
     # Inject accurate historical reality into the baseline
-    base_data['Effort_Required'] = emergency['Effort_Required'].tail(3).mean()
-    if 'ATR' in base_data: base_data['ATR'] = emergency['ATR'].tail(3).mean()
+    base_data['Effort_Required'] = emergency['Effort_Required'].tail(3).mean() if not emergency.empty else 0.0
+    if 'ATR' in base_data: base_data['ATR'] = emergency['ATR'].tail(3).mean() if not emergency.empty else 5.0
     if 'Willpower_Drain_7D' in base_data: base_data['Willpower_Drain_7D'] = float(drain_7d)
     if 'Relapse_Momentum_7D' in base_data: base_data['Relapse_Momentum_7D'] = float(momentum_7d)
     if 'Resistance_Streak' in base_data: base_data['Resistance_Streak'] = float(current_streak)
@@ -73,11 +78,11 @@ def analyze_risk():
         prob = model.predict_proba(input_df)[0][1]
         results.append(prob)
 
-    # Sort hourly risks descending to find your daily "Critical Gauntlets"
+    # Sort hourly risks descending to find daily "Critical Gauntlets"
     sorted_risks = sorted(results, reverse=True)
     top_3_gauntlets = sorted_risks[:3]
 
-    # Metric 1: Realistic Daily Risk (Compounding only across your top 3 high-risk windows)
+    # Metric 1: Realistic Daily Risk (Compounding only across top 3 high-risk windows)
     realistic_daily_risk = 1.0 - np.prod([(1.0 - p) for p in top_3_gauntlets])
 
     # Metric 2: Long-Term Goal Tracker (Compounding across all 24 hours)
@@ -101,33 +106,91 @@ def analyze_risk():
     print("=" * 68)
 
     # ==========================================================
-    # 3. UPCOMING HOUR CHECK WITH CONTEXT OVERRIDES
+    # 3. LIVE UPCOMING HOUR & CONTEXT OVERRIDES
     # ==========================================================
-    choice = input("\nCalculate high-precision risk for the upcoming hour? (y/n): ").strip().lower()
-    if choice == 'y':
-        current_h = pd.Timestamp.now().hour
-        input_data = base_data.copy()
-        if 'Hour' in input_data: input_data['Hour'] = float(current_h)
+    current_h = pd.Timestamp.now().hour
+    live_data = base_data.copy()
+    if 'Hour' in live_data: live_data['Hour'] = float(current_h)
 
-        print(f"\nRefining conditions for {current_h:02d}:00...")
-        for ctx in ['Stressed', 'In bed', 'Alone/ bedroom', 'Bored', 'Tired']:
-            if ctx in expected_features:
-                ans = input(f" -> Is '{ctx}' currently active? (y/n, default n): ").strip().lower()
-                input_data[ctx] = 1.0 if ans == 'y' else 0.0
+    # PATH A: WEB UI MODE (Automated execution from Streamlit app toggles)
+    if ui_inputs is not None:
+        print(f"\n--- LIVE HOURLY RISK FORECAST ({current_h:02d}:00) ---")
+        print("Applying Command Center UI Overrides:")
 
-        input_df = pd.DataFrame([input_data])[expected_features]
-        live_prob = model.predict_proba(input_df)[0][1]
-        print(f"\n[>>>] LIVE PROBABILITY FOR {current_h:02d}:00 : {live_prob:.1%}")
+        # Map UI toggles directly onto model feature names dynamically
+        active_triggers = []
+        for feat in expected_features:
+            feat_lower = feat.lower()
 
-    # ==========================================================
-    # 4. GRANULAR HYPOTHETICAL MODE
-    # ==========================================================
-    choice_hypo = input("\nRun a granular hypothetical stress test? (y/n): ").strip().lower()
-    if choice_hypo == 'y':
-        print("\n--- GRANULAR HYPOTHETICAL MODE ---")
-        print("Type 'exit' at any prompt to abort.\n")
-        hypo_data = base_data.copy()
-        try:
+            # Map isolation
+            if 'alone' in feat_lower and ui_inputs.get('alone'):
+                live_data[feat] = 1.0
+                active_triggers.append(feat)
+            # Map location
+            elif ('bed' in feat_lower or 'room' in feat_lower) and ui_inputs.get('location') == 'Bedroom':
+                live_data[feat] = 1.0
+                active_triggers.append(feat)
+            # Map stress
+            elif 'stress' in feat_lower and ui_inputs.get('stress', 0) >= 6:
+                live_data[feat] = 1.0
+                active_triggers.append(f"{feat} (Level {ui_inputs.get('stress')})")
+            # Map urge
+            elif 'urge' in feat_lower and ui_inputs.get('urge', 0) >= 5:
+                live_data[feat] = float(ui_inputs.get('urge', 1))
+                active_triggers.append(f"{feat} (Level {ui_inputs.get('urge')})")
+            # Map active searching
+            elif ('search' in feat_lower or 'freak' in feat_lower or 'trigger' in feat_lower) and ui_inputs.get(
+                    'searching'):
+                live_data[feat] = 1.0
+                active_triggers.append(feat)
+
+        if active_triggers:
+            for trigger in active_triggers:
+                print(f" [!] Active Factor: {trigger}")
+        else:
+            print(" [i] No high-risk environmental triggers active.")
+
+        live_df = pd.DataFrame([live_data])[expected_features]
+        live_prob = model.predict_proba(live_df)[0][1]
+
+        print("-" * 68)
+        print(f"[>>>] LIVE PROBABILITY FOR {current_h:02d}:00 : {live_prob:.1%}")
+        print("-" * 68)
+
+        # Tactical circuit breakers based on score
+        if live_prob > 0.70 or ui_inputs.get('searching'):
+            print("⚠️ ACTION REQUIRED: IMMEDIATE CIRCUIT BREAKER.")
+            print("1. Terminate current digital session immediately.")
+            print("2. Evacuate current room/isolation area and move to a public space.")
+            print("3. Execute physical reset (maximum hang hold or 50 pushups).")
+        elif live_prob > 0.40:
+            print("⚡ WARNING: Elevated vulnerability window detected.")
+            print("Maintain guardrail protocols. Avoid isolation.")
+        else:
+            print("✅ STATUS: Nominal. Continue scheduled execution.")
+        print("=" * 68)
+        return
+
+    # PATH B: TERMINAL INTERACTIVE MODE (Fallback when run in terminal)
+    try:
+        choice = input("\nCalculate high-precision risk for the upcoming hour? (y/n): ").strip().lower()
+        if choice == 'y':
+            print(f"\nRefining conditions for {current_h:02d}:00...")
+            for ctx in ['Stressed', 'In bed', 'Alone/ bedroom', 'Bored', 'Tired']:
+                if ctx in expected_features:
+                    ans = input(f" -> Is '{ctx}' currently active? (y/n, default n): ").strip().lower()
+                    live_data[ctx] = 1.0 if ans == 'y' else 0.0
+
+            live_df = pd.DataFrame([live_data])[expected_features]
+            live_prob = model.predict_proba(live_df)[0][1]
+            print(f"\n[>>>] LIVE PROBABILITY FOR {current_h:02d}:00 : {live_prob:.1%}")
+
+        # Granular Hypothetical Mode
+        choice_hypo = input("\nRun a granular hypothetical stress test? (y/n): ").strip().lower()
+        if choice_hypo == 'y':
+            print("\n--- GRANULAR HYPOTHETICAL MODE ---")
+            print("Type 'exit' at any prompt to abort.\n")
+            hypo_data = base_data.copy()
             for feat in expected_features:
                 val = input(f"Input value for '{feat}' (Default {base_data.get(feat, 0):.2f}): ").strip()
                 if val.lower() == 'exit': return
@@ -137,9 +200,13 @@ def analyze_risk():
             hypo_df = pd.DataFrame([hypo_data])[expected_features]
             prob = model.predict_proba(hypo_df)[0][1]
             print(f"\n[!] HYPOTHETICAL RISK SCORE: {prob:.1%}")
-        except Exception as e:
-            print(f"Error: {e}. Please enter numeric values.")
+    except (KeyboardInterrupt, EOFError):
+        print("\n[i] Execution terminated.")
 
+
+# Aliases to ensure compatibility with any Streamlit button call
+calculate_risk = analyze_risk
+main = analyze_risk
 
 if __name__ == "__main__":
     analyze_risk()
