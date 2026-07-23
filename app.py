@@ -3,6 +3,8 @@ import io
 import contextlib
 import pandas as pd
 import os
+import sys
+import subprocess
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
@@ -14,23 +16,22 @@ st.set_page_config(
 st.title("⚡ System Command Center")
 st.markdown("Execute syncs, run predictive models, and calculate live risk metrics without touching the terminal.")
 
-# --- MODULE IMPORTS (Case-Safe) ---
-try:
-    import Data_Sync
-except ImportError:
-    try:
-        import data_sync as Data_Sync
-    except ImportError:
-        Data_Sync = None
 
-try:
-    import Predictive_Engine
-except ImportError:
-    try:
-        import predictive_engine as Predictive_Engine
-    except ImportError:
-        Predictive_Engine = None
+# --- HELPER: DIRECT TERMINAL EXECUTION ---
+def run_terminal_script(filename_options):
+    """Executes a script in a separate process exactly like running it in terminal."""
+    for fname in filename_options:
+        if os.path.exists(fname):
+            result = subprocess.run(
+                [sys.executable, fname],
+                capture_output=True,
+                text=True
+            )
+            return result.stdout, result.stderr, fname
+    return None, "File not found in repository.", None
 
+
+# --- MODULE IMPORT FOR TAB 3 (Interactive UI) ---
 try:
     import Risk_Calculator
 except ImportError:
@@ -54,81 +55,68 @@ with tab_sync:
     st.write("Pull the latest logs from Google Sheets into the local system pipeline.")
 
     if st.button("🚀 Run Data Sync", type="primary", use_container_width=True):
-        if Data_Sync is None:
-            st.error("Error: Data_Sync module not found in repository.")
-        else:
-            with st.spinner("Synchronizing with Google Sheets..."):
-                # Capture any terminal output during sync
-                buffer = io.StringIO()
-                with contextlib.redirect_stdout(buffer):
-                    try:
-                        # Call your sync function (adjust function name if different)
-                        if hasattr(Data_Sync, 'sync_data'):
-                            Data_Sync.sync_data()
-                        elif hasattr(Data_Sync, 'main'):
-                            Data_Sync.main()
-                        else:
-                            st.warning("Module found, but could not identify sync_data() or main() function.")
-                    except Exception as e:
-                        st.error(f"Sync failed with error: {e}")
+        with st.spinner("Synchronizing with Google Sheets via terminal execution..."):
+            stdout, stderr, found_file = run_terminal_script(["Data_Sync.py", "data_sync.py"])
 
-                # Display terminal logs from sync
-                logs = buffer.getvalue()
-                if logs:
-                    st.text_area("Terminal Sync Logs:", value=logs, height=150)
+            if not found_file:
+                st.error("Error: Data_Sync.py could not be found in the project directory.")
+            else:
+                if stdout:
+                    st.text_area("Terminal Sync Logs:", value=stdout, height=180)
+                if stderr:
+                    st.error(f"Sync Errors / Traceback:\n{stderr}")
 
-                st.success("Sync Complete!")
+                if not stderr and not stdout:
+                    st.warning("Script executed, but produced no terminal print output.")
+                elif not stderr:
+                    st.success("Sync Complete!")
 
-                # Preview the updated data automatically so you never have to open Sheets
+                # Preview updated CSV data automatically
                 col1, col2 = st.columns(2)
                 with col1:
                     if os.path.exists("daily_health.csv"):
                         st.subheader("Latest Daily Health Data")
                         df_health = pd.read_csv("daily_health.csv")
                         st.dataframe(df_health.tail(5), use_container_width=True)
+                    else:
+                        st.info("daily_health.csv not generated yet.")
                 with col2:
                     if os.path.exists("emergency_log.csv"):
                         st.subheader("Latest Emergency Logs")
                         df_emerg = pd.read_csv("emergency_log.csv")
                         st.dataframe(df_emerg.tail(5), use_container_width=True)
+                    else:
+                        st.info("emergency_log.csv not generated yet.")
 
 # ==========================================
 # TAB 2: PREDICTIVE ENGINE
 # ==========================================
 with tab_engine:
     st.header("Predictive Analytics Engine")
-    st.write("Run the machine learning pipeline and view all metrics, weights, and predictions.")
+    st.write("Run the machine learning pipeline to generate models and view all metrics, weights, and predictions.")
 
     if st.button("🧠 Execute Predictive Engine", type="primary", use_container_width=True):
-        if Predictive_Engine is None:
-            st.error("Error: Predictive_Engine module not found in repository.")
-        else:
-            with st.spinner("Running machine learning pipeline..."):
-                # Intercept terminal output
-                buffer = io.StringIO()
-                with contextlib.redirect_stdout(buffer):
-                    try:
-                        # Execute the engine's main loop or training function
-                        if hasattr(Predictive_Engine, 'run_engine'):
-                            Predictive_Engine.run_engine()
-                        elif hasattr(Predictive_Engine, 'main'):
-                            Predictive_Engine.main()
-                        else:
-                            # If script runs on import or lacks a main func, reload it
-                            import importlib
+        with st.spinner("Executing ML pipeline in terminal process..."):
+            stdout, stderr, found_file = run_terminal_script(["Predictive_Engine.py", "predictive_engine.py"])
 
-                            importlib.reload(Predictive_Engine)
-                    except Exception as e:
-                        print(f"\nExecution Error: {e}")
-
-                # Dump ALL terminal details directly to the screen
-                engine_output = buffer.getvalue()
+            if not found_file:
+                st.error("Error: Predictive_Engine.py could not be found.")
+            else:
                 st.subheader("Complete Engine Terminal Output:")
-                if engine_output.strip():
-                    st.code(engine_output, language="text")
+                if stdout:
+                    st.code(stdout, language="text")
+                else:
+                    st.warning("The script executed without printing text to stdout.")
+
+                if stderr:
+                    st.error(f"Engine Execution Errors:\n{stderr}")
+
+                # Confirm the model file was actually created on the cloud disk
+                if os.path.exists("relapse_predictor.pkl"):
+                    st.success("✅ Model successfully trained and saved to disk as `relapse_predictor.pkl`!")
                 else:
                     st.warning(
-                        "The engine ran, but did not print any text to the terminal. Add print() statements to your engine script to see metrics here.")
+                        "⚠️ The script finished, but `relapse_predictor.pkl` was not generated. Check the error traceback above.")
 
 # ==========================================
 # TAB 3: RISK CALCULATOR INTERFACE
@@ -137,7 +125,7 @@ with tab_risk:
     st.header("Live Risk Analysis")
     st.write("Input current environment parameters to calculate immediate vulnerability metrics.")
 
-    # --- WEB UI INPUTS (Replicating terminal input() questions) ---
+    # --- WEB UI INPUTS ---
     st.subheader("Current Status Parameters")
 
     col_a, col_b = st.columns(2)
@@ -157,12 +145,14 @@ with tab_risk:
     if st.button("⚠️ Run Risk Analysis", type="primary", use_container_width=True):
         if Risk_Calculator is None:
             st.error("Error: Risk_Calculator module not found.")
+        elif not os.path.exists("relapse_predictor.pkl"):
+            st.error(
+                "🛑 [ERROR] Model not found on cloud disk. You must go to the 'Predictive Engine' tab and run the engine first to generate `relapse_predictor.pkl`!")
         else:
             with st.spinner("Calculating risk matrix..."):
                 buffer = io.StringIO()
                 with contextlib.redirect_stdout(buffer):
                     try:
-                        # Package UI inputs to pass to your calculator
                         inputs = {
                             "alone": is_alone == "Yes",
                             "location": location,
@@ -172,27 +162,20 @@ with tab_risk:
                             "time": time_of_day
                         }
 
-                        # Attempt to pass inputs if your calculator accepts arguments
-                        if hasattr(Risk_Calculator, 'calculate_risk'):
+                        if hasattr(Risk_Calculator, 'analyze_risk'):
+                            Risk_Calculator.analyze_risk(inputs)
+                        elif hasattr(Risk_Calculator, 'calculate_risk'):
                             Risk_Calculator.calculate_risk(inputs)
                         elif hasattr(Risk_Calculator, 'main'):
-                            Risk_Calculator.main()
+                            Risk_Calculator.main(inputs)
                         else:
-                            # Fallback: reload module to trigger standalone execution
-                            import importlib
-
-                            importlib.reload(Risk_Calculator)
+                            st.error("Could not find analyze_risk() inside Risk_Calculator.py")
                     except Exception as e:
                         print(f"\nRisk Calculation Error: {e}")
 
-                # Display complete terminal output
                 risk_output = buffer.getvalue()
                 st.subheader("Risk Analysis Results:")
                 if risk_output.strip():
                     st.code(risk_output, language="text")
                 else:
-                    # If the calculator script doesn't print yet, show raw data calculation
-                    st.write("Raw Input Matrix Captured:")
-                    st.json(inputs)
-                    st.info(
-                        "To see your custom math here, ensure your Risk_Calculator.py prints its results to the console!")
+                    st.warning("Calculation finished, but no output was printed.")
